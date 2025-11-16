@@ -289,5 +289,48 @@ void main() {
         expect(harness.listAfterCalls, equals(2));
       },
     );
+
+    test(
+      'pagination proceeds correctly when a full page of notes are pinned',
+      () async {
+        // 1. Setup: 25 notes, 20 pinned, 5 unpinned
+        await harness.seedNotes(25);
+        final allNoteIds =
+            (await harness.db.select(harness.db.localNotes).get())
+                .map((e) => e.id)
+                .toList();
+
+        // Pin the first 20 notes created (which are the oldest)
+        final twentyToPin = allNoteIds.sublist(5);
+        await (harness.db.update(harness.db.localNotes)
+              ..where((tbl) => tbl.id.isIn(twentyToPin)))
+            .write(const LocalNotesCompanion(isPinned: Value(true)));
+
+        // 2. Initial load
+        final notifier = harness.buildNotifier();
+        await notifier.loadMore();
+
+        // 3. First page: 20 pinned notes
+        final page1 = harness.container.read(notesPageProvider).value!;
+        expect(page1.items.length, 20);
+        expect(page1.items.every((note) => note.isPinned), isTrue);
+        expect(page1.hasMore, isTrue);
+
+        // 4. Load second page
+        await notifier.loadMore();
+
+        // 5. Second page: Should contain the 5 unpinned notes
+        final page2 = harness.container.read(notesPageProvider).value!;
+        expect(page2.items.length, 25);
+        final unpinnedNotes =
+            page2.items.where((note) => !note.isPinned).toList();
+        expect(unpinnedNotes.length, 5,
+            reason:
+                'After loading the second page, we should see the 5 unpinned notes');
+
+        // Verify no infinite loop by checking repository calls
+        expect(harness.listAfterCalls, 2);
+      },
+    );
   });
 }
